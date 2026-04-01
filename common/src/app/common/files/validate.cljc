@@ -489,8 +489,7 @@
 (defn- check-variant-container
   "Shape is a variant container, so:
      -all its children should be variants with variant-id equals to the shape-id
-     -all the components should have the same properties
-   "
+     -all the components should have the same properties"
   [shape file page]
   (let [shape-id   (:id shape)
         shapes     (:shapes shape)
