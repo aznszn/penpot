@@ -33,6 +33,7 @@
 - Fix dates to avoid show them in english when browser is in auto [Taiga #13786](https://tree.taiga.io/project/penpot/issue/13786)
 - Fix focus radio button [Taiga #13841](https://tree.taiga.io/project/penpot/issue/13841)
 - Token tree should be expanded by default [Taiga #13631](https://tree.taiga.io/project/penpot/issue/13631)
+- Fix component "broken" after switch variant [Taiga #12984](https://tree.taiga.io/project/penpot/issue/12984)
 
 ## 2.15.0 (Unreleased)
 
@@ -51,7 +52,6 @@
 - Add token name on broken token pill on sidebar [Taiga #13527](https://tree.taiga.io/project/penpot/issue/13527)
 - Fix tooltip activated when tab change [Taiga #13627](https://tree.taiga.io/project/penpot/issue/13627)
 - Fix title on shared button [Taiga #13730](https://tree.taiga.io/project/penpot/issue/13730)
-
 
 ## 2.14.1
 
@@ -75,7 +75,6 @@
 - Fix null text crash on paste in text editor
 - Ensure path content is always PathData when saving
 - Fix error when get-parent-with-data encounters non-Element nodes
-
 
 ## 2.14.0
 
