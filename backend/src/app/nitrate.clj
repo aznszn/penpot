@@ -108,7 +108,8 @@
    [:slug ::sm/text]
    [:is-your-penpot :boolean]
    [:owner-id ::sm/uuid]
-   [:avatar-bg-url [::sm/text]]])
+   [:avatar-bg-url [::sm/text]]
+   [:logo-data-url {:optional true} [:maybe ::sm/text]]])
 
 (def ^:private schema:org-summary
   [:map
@@ -348,6 +349,7 @@
                :organization-slug (:slug org)
                :organization-owner-id (:owner-id org)
                :organization-avatar-bg-url (:avatar-bg-url org)
+               :organization-custom-photo (:logo-data-url org)
                :is-default (or (:is-default team) (true? (:is-your-penpot org))))
         team))
     (catch Throwable cause

@@ -692,7 +692,7 @@
 
 
 (defn- team->org [team]
-  (assoc (dm/select-keys team [:id :organization-id :organization-slug :organization-owner-id :organization-avatar-bg-url])
+  (assoc (dm/select-keys team [:id :organization-id :organization-slug :organization-owner-id :organization-avatar-bg-url :organization-custom-photo])
          :name (:organization-name team)
          :default-team-id (:id team)))
 

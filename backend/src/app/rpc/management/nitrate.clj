@@ -21,6 +21,7 @@
    [app.rpc.commands.profile :as profile]
    [app.rpc.commands.teams :as teams]
    [app.rpc.doc :as doc]
+   [app.storage :as sto]
    [app.util.services :as sv]))
 
 ;; ---- API: authenticate
@@ -73,6 +74,33 @@
   (let [current-user-id (-> (profile/get-profile cfg profile-id) :id)]
     (->> (db/exec! cfg [sql:get-teams current-user-id])
          (map #(select-keys % [:id :name])))))
+
+;; ---- API: upload-org-logo
+
+(def ^:private schema:upload-org-logo
+  [:map
+   [:logo-data ::sm/text]
+   [:logo-mime-type ::sm/text]])
+
+(def ^:private schema:upload-org-logo-result
+  [:map [:logo-url ::sm/text]])
+
+(sv/defmethod ::upload-org-logo
+  "Store an organization logo in penpot storage and return its public URL"
+  {::doc/added "2.16"
+   ::sm/params schema:upload-org-logo
+   ::sm/result schema:upload-org-logo-result
+   ::rpc/auth false}
+  [{:keys [::sto/storage]} {:keys [logo-data logo-mime-type]}]
+  (let [data    (.decode (java.util.Base64/getDecoder) ^String logo-data)
+        hash    (sto/calculate-hash data)
+        content (-> (sto/content data)
+                    (sto/wrap-with-hash hash))
+        obj     (sto/put-object! storage {::sto/content     content
+                                          ::sto/deduplicate? true
+                                          :bucket            "org-logo"
+                                          :content-type      logo-mime-type})]
+    {:logo-url (files/resolve-public-uri (:id obj))}))
 
 ;; ---- API: notify-team-change
 
