@@ -57,6 +57,11 @@ pub struct Surfaces {
     export: skia::Surface,
 
     tiles: TileTextureCache,
+    // Persistent 1:1 document-space atlas that gets incrementally updated as tiles render.
+    // It grows dynamically to include any rendered document rect.
+    atlas: Option<skia::Surface>,
+    atlas_origin: skia::Point,
+    atlas_size: skia::ISize,
     sampling_options: skia::SamplingOptions,
     pub margins: skia::ISize,
     // Tracks which surfaces have content (dirty flag bitmask)
@@ -115,11 +120,110 @@ impl Surfaces {
             debug,
             export,
             tiles,
+            atlas: None,
+            atlas_origin: skia::Point::new(0.0, 0.0),
+            atlas_size: skia::ISize::new(0, 0),
             sampling_options,
             margins,
             dirty_surfaces: 0,
             extra_tile_dims,
         })
+    }
+
+    fn ensure_atlas_contains(&mut self, gpu_state: &mut GpuState, doc_rect: skia::Rect) -> Result<()> {
+        if doc_rect.is_empty() {
+            return Ok(());
+        }
+
+        // Current atlas bounds in document space (1 unit == 1 px).
+        let current_left = self.atlas_origin.x;
+        let current_top = self.atlas_origin.y;
+        let current_right = current_left + self.atlas_size.width as f32;
+        let current_bottom = current_top + self.atlas_size.height as f32;
+
+        let mut new_left = current_left;
+        let mut new_top = current_top;
+        let mut new_right = current_right;
+        let mut new_bottom = current_bottom;
+
+        // If atlas is empty/uninitialized, seed to rect (expanded to tile boundaries for fewer reallocs).
+        let needs_init = self.atlas.is_none() || self.atlas_size.width <= 0 || self.atlas_size.height <= 0;
+        if needs_init {
+            new_left = doc_rect.left.floor();
+            new_top = doc_rect.top.floor();
+            new_right = doc_rect.right.ceil();
+            new_bottom = doc_rect.bottom.ceil();
+        } else {
+            new_left = new_left.min(doc_rect.left.floor());
+            new_top = new_top.min(doc_rect.top.floor());
+            new_right = new_right.max(doc_rect.right.ceil());
+            new_bottom = new_bottom.max(doc_rect.bottom.ceil());
+        }
+
+        // Add padding to reduce realloc frequency.
+        let pad = TILE_SIZE.max(256.0);
+        new_left -= pad;
+        new_top -= pad;
+        new_right += pad;
+        new_bottom += pad;
+
+        let new_w = (new_right - new_left).max(1.0).ceil() as i32;
+        let new_h = (new_bottom - new_top).max(1.0).ceil() as i32;
+
+        // Fast path: existing atlas already contains the rect.
+        if !needs_init
+            && doc_rect.left >= current_left
+            && doc_rect.top >= current_top
+            && doc_rect.right <= current_right
+            && doc_rect.bottom <= current_bottom
+        {
+            return Ok(());
+        }
+
+        let mut new_atlas = gpu_state.create_surface_with_dimensions("atlas".to_string(), new_w, new_h)?;
+        new_atlas.canvas().clear(skia::Color::TRANSPARENT);
+
+        // Copy old atlas into the new one with offset.
+        if let Some(mut old) = self.atlas.take() {
+            let dx = current_left - new_left;
+            let dy = current_top - new_top;
+            old.draw(
+                new_atlas.canvas(),
+                (dx, dy),
+                self.sampling_options,
+                Some(&skia::Paint::default()),
+            );
+        }
+
+        self.atlas_origin = skia::Point::new(new_left, new_top);
+        self.atlas_size = skia::ISize::new(new_w, new_h);
+        self.atlas = Some(new_atlas);
+        Ok(())
+    }
+
+    fn blit_tile_image_into_atlas(
+        &mut self,
+        gpu_state: &mut GpuState,
+        tile_image: &skia::Image,
+        doc_rect: skia::Rect,
+    ) -> Result<()> {
+        self.ensure_atlas_contains(gpu_state, doc_rect)?;
+        let Some(atlas) = self.atlas.as_mut() else {
+            return Ok(());
+        };
+
+        // Destination is document-space rect mapped into atlas pixel coords.
+        let dst = skia::Rect::from_xywh(
+            doc_rect.left - self.atlas_origin.x,
+            doc_rect.top - self.atlas_origin.y,
+            doc_rect.width(),
+            doc_rect.height(),
+        );
+
+        atlas
+            .canvas()
+            .draw_image_rect(tile_image, None, dst, &skia::Paint::default());
+        Ok(())
     }
 
     pub fn clear_tiles(&mut self) {
@@ -167,6 +271,68 @@ impl Surfaces {
         let surface = self.get_mut(id);
         if let Some(image) = surface.image_snapshot_with_bounds(irect) {
             let mut context = surface.direct_context();
+            let encoded_image = image
+                .encode(context.as_mut(), skia::EncodedImageFormat::PNG, None)
+                .ok_or(Error::CriticalError("Failed to encode image".to_string()))?;
+            Ok(Some(
+                general_purpose::STANDARD.encode(encoded_image.as_bytes()),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn base64_snapshot_atlas(&mut self) -> Result<Option<String>> {
+        let Some(atlas) = self.atlas.as_mut() else {
+            return Ok(None);
+        };
+        let image = atlas.image_snapshot();
+        let mut context = atlas.direct_context();
+        let encoded_image = image
+            .encode(context.as_mut(), skia::EncodedImageFormat::PNG, None)
+            .ok_or(Error::CriticalError("Failed to encode image".to_string()))?;
+        Ok(Some(
+            general_purpose::STANDARD.encode(encoded_image.as_bytes()),
+        ))
+    }
+
+    /// doc_rect is in document space (1 unit == 1px at 100%).
+    /// Returns None when atlas is empty or rect doesn't intersect atlas.
+    pub fn base64_snapshot_atlas_rect(&mut self, doc_rect: skia::Rect) -> Result<Option<String>> {
+        let Some(atlas) = self.atlas.as_mut() else {
+            return Ok(None);
+        };
+        if doc_rect.is_empty() || self.atlas_size.width <= 0 || self.atlas_size.height <= 0 {
+            return Ok(None);
+        }
+
+        let mut local = skia::Rect::from_xywh(
+            doc_rect.left - self.atlas_origin.x,
+            doc_rect.top - self.atlas_origin.y,
+            doc_rect.width(),
+            doc_rect.height(),
+        );
+
+        let atlas_bounds = skia::Rect::from_xywh(
+            0.0,
+            0.0,
+            self.atlas_size.width as f32,
+            self.atlas_size.height as f32,
+        );
+
+        if !local.intersect(atlas_bounds) {
+            return Ok(None);
+        }
+
+        let irect = skia::IRect::from_ltrb(
+            local.left.floor() as i32,
+            local.top.floor() as i32,
+            local.right.ceil() as i32,
+            local.bottom.ceil() as i32,
+        );
+
+        if let Some(image) = atlas.image_snapshot_with_bounds(irect) {
+            let mut context = atlas.direct_context();
             let encoded_image = image
                 .encode(context.as_mut(), skia::EncodedImageFormat::PNG, None)
                 .ok_or(Error::CriticalError("Failed to encode image".to_string()))?;
@@ -535,9 +701,11 @@ impl Surfaces {
 
     pub fn cache_current_tile_texture(
         &mut self,
+        gpu_state: &mut GpuState,
         tile_viewbox: &TileViewbox,
         tile: &Tile,
         tile_rect: &skia::Rect,
+        tile_doc_rect: skia::Rect,
     ) {
         let rect = IRect::from_xywh(
             self.margins.width,
@@ -557,7 +725,12 @@ impl Surfaces {
                 &skia::Paint::default(),
             );
 
-            self.tiles.add(tile_viewbox, tile, tile_image);
+            // Keep a copy to also blit into the persistent atlas.
+            self.tiles.add(tile_viewbox, tile, tile_image.clone());
+
+            // Incrementally update persistent 1:1 atlas in document space.
+            // `tile_doc_rect` is in world/document coordinates (1 unit == 1 px at 100%).
+            let _ = self.blit_tile_image_into_atlas(gpu_state, &tile_image, tile_doc_rect);
         }
     }
 

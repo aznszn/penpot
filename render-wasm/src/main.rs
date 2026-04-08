@@ -882,6 +882,71 @@ pub extern "C" fn render_shape_pixels(
     })
 }
 
+#[no_mangle]
+#[wasm_error]
+pub extern "C" fn debug_atlas_console() -> Result<()> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use crate::run_script;
+        with_state_mut!(state, {
+            let b64 = state
+                .render_state_mut()
+                .surfaces
+                .base64_snapshot_atlas()?
+                .unwrap_or_default();
+
+            if b64.is_empty() {
+                run_script!("console.log('[render-wasm] atlas: <empty>')".to_string());
+            } else {
+                run_script!(format!("console.log('%c ', 'font-size: 1px; background: url(data:image/png;base64,{b64}) no-repeat; padding: 256px; background-size: contain;')"));
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Returns `[u32 byte_len][utf8 bytes...]` with the base64 PNG of the atlas.
+/// When atlas is empty, returns len=0 (no bytes).
+#[no_mangle]
+#[wasm_error]
+pub extern "C" fn debug_atlas_base64() -> Result<*mut u8> {
+    with_state_mut!(state, {
+        let b64 = state
+            .render_state_mut()
+            .surfaces
+            .base64_snapshot_atlas()?
+            .unwrap_or_default();
+
+        let bytes = b64.as_bytes();
+        let len = bytes.len() as u32;
+        let mut buf = Vec::with_capacity(4 + bytes.len());
+        buf.extend_from_slice(&len.to_le_bytes());
+        buf.extend_from_slice(bytes);
+        Ok(mem::write_bytes(buf))
+    })
+}
+
+/// Same as `debug_atlas_base64` but only for a doc-space rect (x,y,w,h).
+#[no_mangle]
+#[wasm_error]
+pub extern "C" fn debug_atlas_rect_base64(x: f32, y: f32, w: f32, h: f32) -> Result<*mut u8> {
+    with_state_mut!(state, {
+        let rect = skia::Rect::from_xywh(x, y, w, h);
+        let b64 = state
+            .render_state_mut()
+            .surfaces
+            .base64_snapshot_atlas_rect(rect)?
+            .unwrap_or_default();
+
+        let bytes = b64.as_bytes();
+        let len = bytes.len() as u32;
+        let mut buf = Vec::with_capacity(4 + bytes.len());
+        buf.extend_from_slice(&len.to_le_bytes());
+        buf.extend_from_slice(bytes);
+        Ok(mem::write_bytes(buf))
+    })
+}
+
 fn main() {
     #[cfg(target_arch = "wasm32")]
     init_gl!();

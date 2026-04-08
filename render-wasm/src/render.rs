@@ -667,11 +667,13 @@ impl RenderState {
     pub fn apply_render_to_final_canvas(&mut self, rect: skia::Rect) -> Result<()> {
         let tile_rect = self.get_current_aligned_tile_bounds()?;
         self.surfaces.cache_current_tile_texture(
+            &mut self.gpu_state,
             &self.tile_viewbox,
             &self
                 .current_tile
                 .ok_or(Error::CriticalError("Current tile not found".to_string()))?,
             &tile_rect,
+            self.render_area,
         );
 
         self.surfaces.draw_cached_tile_surface(
