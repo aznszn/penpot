@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 use crate::performance;
 use crate::shapes::Shape;
+use crate::view::Viewbox;
 
 use skia_safe::{self as skia, IRect, Paint, RRect};
 
@@ -228,6 +229,36 @@ impl Surfaces {
 
     pub fn clear_tiles(&mut self) {
         self.tiles.clear();
+    }
+
+    pub fn has_atlas(&self) -> bool {
+        self.atlas.is_some() && self.atlas_size.width > 0 && self.atlas_size.height > 0
+    }
+
+    /// Draw the persistent 1:1 atlas onto the target using the current viewbox transform.
+    /// Intended for fast pan/zoom-out previews (avoids per-tile composition).
+    pub fn draw_atlas_to_target(&mut self, viewbox: Viewbox, dpr: f32, background: skia::Color) {
+        let Some(atlas) = self.atlas.as_mut() else {
+            return;
+        };
+
+        let canvas = self.target.canvas();
+        canvas.save();
+        canvas.reset_matrix();
+
+        let s = viewbox.zoom * dpr;
+        canvas.scale((s, s));
+        canvas.translate((viewbox.pan_x, viewbox.pan_y));
+        canvas.clear(background);
+
+        atlas.clone().draw(
+            canvas,
+            (self.atlas_origin.x, self.atlas_origin.y),
+            self.sampling_options,
+            Some(&skia::Paint::default()),
+        );
+
+        canvas.restore();
     }
 
     pub fn margins(&self) -> skia::ISize {
