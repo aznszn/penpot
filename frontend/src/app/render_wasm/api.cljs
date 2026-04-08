@@ -966,12 +966,13 @@
     (fns/debounce do-render DEBOUNCE_DELAY_MS)))
 
 (def render-pan
-  (letfn [(do-render-pan [ts]
-            ;; Check if context is still initialized before executing
-            ;; to prevent errors when navigating quickly
-            (when wasm/context-initialized?
+  (letfn [(do-render-pan [_ts]
+            ;; During panning we want the cheapest possible draw path.
+            ;; `_render_from_cache` should use the persistent atlas (when present)
+            ;; and avoid triggering heavy tile rendering work per frame.
+            (when (and wasm/context-initialized? (not @wasm/context-lost?))
               (perf/begin-measure "render-pan")
-              (render ts)
+              (h/call wasm/internal-module "_render_from_cache" 0)
               (perf/end-measure "render-pan")))]
     (fns/throttle do-render-pan THROTTLE_DELAY_MS)))
 

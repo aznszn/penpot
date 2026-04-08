@@ -245,13 +245,19 @@ impl Surfaces {
         let canvas = self.target.canvas();
         canvas.save();
         canvas.reset_matrix();
+        let size = canvas.base_layer_size();
+        canvas.clip_rect(
+            skia::Rect::from_xywh(0.0, 0.0, size.width as f32, size.height as f32),
+            None,
+            true,
+        );
 
         let s = viewbox.zoom * dpr;
         canvas.scale((s, s));
         canvas.translate((viewbox.pan_x, viewbox.pan_y));
         canvas.clear(background);
 
-        atlas.clone().draw(
+        atlas.draw(
             canvas,
             (self.atlas_origin.x, self.atlas_origin.y),
             self.sampling_options,
